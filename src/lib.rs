@@ -1,6 +1,6 @@
 #![deny(missing_docs)]
 
-//! A bridge between [std::io::std{in,out}][1] and Future's AsyncRead/AsyncWrite world.
+//! A bridge between [std::io::std{in,out}][1] and Future's AsyncRead/AsyncWrite worlds.
 //! [1]:https://doc.rust-lang.org/std/io/fn.stdin.html
 //!
 //! Example:
@@ -18,7 +18,7 @@
 //! core.run(tokio_io::io::copy(stdin, stdout)).unwrap();
 //! ```
 //!
-//! It works by starting separate threads, which do actual synchronous I/O and communicates to
+//! It works by starting separate threads, which do actual synchronous I/O and communicating to
 //! the asynchronous world using [future::sync::mpsc](http://alexcrichton.com/futures-rs/futures/sync/mpsc/index.html).
 //!
 //! For Unix (Linux, OS X) better use [tokio-file-unix](https://crates.io/crates/tokio-file-unix).
