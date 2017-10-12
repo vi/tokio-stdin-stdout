@@ -135,6 +135,7 @@ pub fn stdout(queue_size:usize) -> ThreadedStdout {
         snd,
     }
 }
+
 impl AsyncWrite for ThreadedStdout {
     fn shutdown(&mut self) -> Poll<(), Error> {
         match self.snd.close() {
@@ -162,3 +163,27 @@ impl Write for ThreadedStdout {
     }
 }
 
+// XXX code duplication:
+
+/// Asynchronous stderr
+pub type ThreadedStderr = ThreadedStdout;
+/// Constructor for the `ThreadedStderr`
+pub fn stderr(queue_size:usize) -> ThreadedStderr {
+    let (snd, rcv) : (BBS,BBR) =  futures::sync::mpsc::channel(queue_size);
+    std::thread::spawn(move || {
+        let sout = ::std::io::stderr();
+        let mut sout_lock = sout.lock();
+        for b in rcv.wait() {
+            if let Err(_) = b {
+                break;
+            }
+            if let Err(_) = sout_lock.write_all(&b.unwrap()) {
+                break;
+            }
+        }
+        let _ = sout_lock.write(&[]);
+    });
+    ThreadedStdout {
+        snd,
+    }
+}
