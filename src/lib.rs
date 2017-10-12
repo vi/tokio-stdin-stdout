@@ -1,3 +1,35 @@
+#![deny(missing_docs)]
+
+//! A bridge between [std::io::std{in,out}][1] and Future's AsyncRead/AsyncWrite world.
+//! [1]:https://doc.rust-lang.org/std/io/fn.stdin.html
+//!
+//! Example:
+//!
+//! ```rust,no_run
+//! extern crate tokio_core;
+//! extern crate tokio_io;
+//! extern crate tokio_stdin_stdout;
+//!
+//! let mut core = tokio_core::reactor::Core::new().unwrap();
+//!
+//! let stdin = tokio_stdin_stdout::stdin(0);
+//! let stdout = tokio_stdin_stdout::stdout(0);
+//!
+//! core.run(tokio_io::io::copy(stdin, stdout)).unwrap();
+//! ```
+//!
+//! It works by starting separate threads, which do actual synchronous I/O and communicates to
+//! the asynchronous world using [future::sync::mpsc](http://alexcrichton.com/futures-rs/futures/sync/mpsc/index.html).
+//!
+//! For Unix (Linux, OS X) better use [tokio-file-unix](https://crates.io/crates/tokio-file-unix).
+//!
+//! Concerns:
+//!
+//! * stdin/stdout are not expected to be ever normally used after using functions from this crate
+//! * Allocation-heavy.
+//! * All errors collapsed to ErrorKind::Other (for stdout) or ErrorKind::BrokenPipe (for stdin)
+//! * Failure to write to stdout is only seen after attempting to send there about 3 more buffers.
+
 extern crate tokio_io;
 extern crate futures;
 
@@ -10,11 +42,13 @@ use tokio_io::{AsyncRead,AsyncWrite};
 type BBR = futures::sync::mpsc::Receiver <Box<[u8]>>;
 type BBS = futures::sync::mpsc::Sender   <Box<[u8]>>;
 
+/// Asynchronous stdin
 pub struct ThreadedStdin {
     debt : Option<Box<[u8]>>,
     rcv : BBR,
-}
 
+}
+/// Constructor for the `ThreadedStdin`
 pub fn stdin(queue_size:usize) -> ThreadedStdin {
     let (snd_, rcv) : (BBS,BBR) =  futures::sync::mpsc::channel(queue_size);
     std::thread::spawn(move || {
@@ -77,10 +111,11 @@ impl Read for ThreadedStdin {
 }
 
 
-
+/// Asynchronous stdout
 pub struct ThreadedStdout {
     snd : BBS,
 }
+/// Constructor for the `ThreadedStdout`
 pub fn stdout(queue_size:usize) -> ThreadedStdout {
     let (snd, rcv) : (BBS,BBR) =  futures::sync::mpsc::channel(queue_size);
     std::thread::spawn(move || {
@@ -120,7 +155,6 @@ impl Write for ThreadedStdout {
     }
     fn flush(&mut self) -> Result<()> {
         match self.snd.poll_complete() {
-            // XXX
             Ok(Async::Ready(_))    => Ok(()),
             Ok(Async::NotReady)    => Err(ErrorKind::WouldBlock.into()),
             Err(_) => return Err(ErrorKind::Other.into()),

@@ -1,7 +1,7 @@
 # tokio-stdin-stdout
 AsyncRead/AsyncWrite stdin/stdout for Tokio
 
-[Documentation](https://docs.rs/tokio-stdin-stdout)
+[Documentation](https://docs.rs/tokio-stdin-stdout) - more description there
 
 Example:
 
