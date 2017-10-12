@@ -15,8 +15,8 @@ pub struct ThreadedStdin {
     rcv : BBR,
 }
 
-pub fn stdin() -> ThreadedStdin {
-    let (snd_, rcv) : (BBS,BBR) =  futures::sync::mpsc::channel(0);
+pub fn stdin(queue_size:usize) -> ThreadedStdin {
+    let (snd_, rcv) : (BBS,BBR) =  futures::sync::mpsc::channel(queue_size);
     std::thread::spawn(move || {
         let mut snd = snd_;
         let sin = ::std::io::stdin();
@@ -81,8 +81,8 @@ impl Read for ThreadedStdin {
 pub struct ThreadedStdout {
     snd : BBS,
 }
-pub fn stdout() -> ThreadedStdout {
-    let (snd, rcv) : (BBS,BBR) =  futures::sync::mpsc::channel(0);
+pub fn stdout(queue_size:usize) -> ThreadedStdout {
+    let (snd, rcv) : (BBS,BBR) =  futures::sync::mpsc::channel(queue_size);
     std::thread::spawn(move || {
         let sout = ::std::io::stdout();
         let mut sout_lock = sout.lock();
@@ -94,6 +94,7 @@ pub fn stdout() -> ThreadedStdout {
                 break;
             }
         }
+        let _ = sout_lock.write(&[]);
     });
     ThreadedStdout {
         snd,
@@ -101,8 +102,10 @@ pub fn stdout() -> ThreadedStdout {
 }
 impl AsyncWrite for ThreadedStdout {
     fn shutdown(&mut self) -> Poll<(), Error> {
-        // XXX
-        Ok(Async::Ready(()))
+        match self.snd.close() {
+            Ok(x) => Ok(x),
+            Err(_) => Err(ErrorKind::Other.into()),
+        }
     }
 }
 impl Write for ThreadedStdout {
@@ -112,17 +115,16 @@ impl Write for ThreadedStdout {
             Ok(AsyncSink::NotReady(_)) => return Err(ErrorKind::WouldBlock.into()),
             Err(_)                     => return Err(ErrorKind::Other.into()),
         }
-        match self.snd.poll_complete() {
-            // XXX
-            Ok(Async::Ready(_))    => (), // OK
-            Ok(Async::NotReady)    => (), // don't know what to do here
-            Err(_) => return Err(ErrorKind::Other.into()),
-        }
+        
         Ok(buf.len())
     }
     fn flush(&mut self) -> Result<()> {
-        // XXX
-        Ok(())
+        match self.snd.poll_complete() {
+            // XXX
+            Ok(Async::Ready(_))    => Ok(()),
+            Ok(Async::NotReady)    => Err(ErrorKind::WouldBlock.into()),
+            Err(_) => return Err(ErrorKind::Other.into()),
+        }
     }
 }
 
