@@ -38,6 +38,7 @@ const BUFSIZ: usize = 8192;
 use std::io::{Error, ErrorKind, Result, Read, Write};
 use futures::{Stream,Poll,Async,Sink,Future,AsyncSink};
 use tokio_io::{AsyncRead,AsyncWrite};
+use std::thread::JoinHandle;
 
 type BBR = futures::sync::mpsc::Receiver <Box<[u8]>>;
 type BBS = futures::sync::mpsc::Sender   <Box<[u8]>>;
@@ -114,18 +115,23 @@ impl Read for ThreadedStdin {
 /// Asynchronous stdout
 pub struct ThreadedStdout {
     snd : BBS,
+    jh: Option<JoinHandle<()>>,
 }
 /// Constructor for the `ThreadedStdout`
 pub fn stdout(queue_size:usize) -> ThreadedStdout {
     let (snd, rcv) : (BBS,BBR) =  futures::sync::mpsc::channel(queue_size);
-    std::thread::spawn(move || {
+    let jh = std::thread::spawn(move || {
         let sout = ::std::io::stdout();
         let mut sout_lock = sout.lock();
         for b in rcv.wait() {
-            if let Err(_) = b {
-                break;
-            }
-            if let Err(_) = sout_lock.write_all(&b.unwrap()) {
+            if let Ok(b) = b {
+                if b.len() == 0 {
+                    break;
+                }
+                if let Err(_) = sout_lock.write_all(&b) {
+                    break;
+                }
+            } else {
                 break;
             }
         }
@@ -133,19 +139,44 @@ pub fn stdout(queue_size:usize) -> ThreadedStdout {
     });
     ThreadedStdout {
         snd,
+        jh:Some(jh),
     }
 }
 
 impl AsyncWrite for ThreadedStdout {
     fn shutdown(&mut self) -> Poll<(), Error> {
-        match self.snd.close() {
-            Ok(x) => Ok(x),
-            Err(_) => Err(ErrorKind::Other.into()),
+        // Signal the thread to exit.
+        match self.snd.start_send(vec![].into_boxed_slice()) {
+            Ok(AsyncSink::Ready)       => (),
+            Ok(AsyncSink::NotReady(_)) => {
+                return Ok(Async::NotReady)
+            },
+            Err(_)                     => {
+                return Err(ErrorKind::Other.into())
+            },
+        };
+        match self.snd.poll_complete() {
+            Ok(Async::Ready(_))    => (),
+            Ok(Async::NotReady)    => return Ok(Async::NotReady),
+            Err(_) => return Err(ErrorKind::Other.into()),
+        };
+        if let Err(_) = self.snd.close() {
+            return Err(ErrorKind::Other.into());
+        };
+        if let Some(jh) = self.jh.take() {
+            if let Err(_) = jh.join() {
+                return Err(ErrorKind::Other.into());
+            };
         }
+        Ok(Async::Ready(()))
     }
 }
 impl Write for ThreadedStdout {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        if buf.len() == 0 {
+            return Ok(0);
+        }
+    
         match self.snd.start_send(buf.to_vec().into_boxed_slice()) {
             Ok(AsyncSink::Ready)       => (),
             Ok(AsyncSink::NotReady(_)) => return Err(ErrorKind::WouldBlock.into()),
@@ -170,14 +201,18 @@ pub type ThreadedStderr = ThreadedStdout;
 /// Constructor for the `ThreadedStderr`
 pub fn stderr(queue_size:usize) -> ThreadedStderr {
     let (snd, rcv) : (BBS,BBR) =  futures::sync::mpsc::channel(queue_size);
-    std::thread::spawn(move || {
+    let jh = std::thread::spawn(move || {
         let sout = ::std::io::stderr();
         let mut sout_lock = sout.lock();
         for b in rcv.wait() {
-            if let Err(_) = b {
-                break;
-            }
-            if let Err(_) = sout_lock.write_all(&b.unwrap()) {
+            if let Ok(b) = b {
+                if b.len() == 0 {
+                    break;
+                }
+                if let Err(_) = sout_lock.write_all(&b) {
+                    break;
+                }
+            } else {
                 break;
             }
         }
@@ -185,5 +220,6 @@ pub fn stderr(queue_size:usize) -> ThreadedStderr {
     });
     ThreadedStdout {
         snd,
+        jh:Some(jh),
     }
 }
