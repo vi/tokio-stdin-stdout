@@ -131,6 +131,9 @@ pub fn stdout(queue_size:usize) -> ThreadedStdout {
                 if let Err(_) = sout_lock.write_all(&b) {
                     break;
                 }
+                if let Err(_) = sout_lock.flush() {
+                    break;
+                }
             } else {
                 break;
             }
@@ -210,6 +213,9 @@ pub fn stderr(queue_size:usize) -> ThreadedStderr {
                     break;
                 }
                 if let Err(_) = sout_lock.write_all(&b) {
+                    break;
+                }
+                if let Err(_) = sout_lock.flush() {
                     break;
                 }
             } else {
