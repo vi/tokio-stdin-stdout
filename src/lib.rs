@@ -30,26 +30,26 @@
 //! * All errors collapsed to ErrorKind::Other (for stdout) or ErrorKind::BrokenPipe (for stdin)
 //! * Failure to write to stdout is only seen after attempting to send there about 3 more buffers.
 
-extern crate tokio_io;
 extern crate futures;
+extern crate tokio_io;
 
 const BUFSIZ: usize = 8192;
 
-use std::io::{Error, ErrorKind, Result, Read, Write};
-use futures::{Stream,Poll,Async,Sink,Future,AsyncSink};
-use tokio_io::{AsyncRead,AsyncWrite};
-use std::thread::JoinHandle;
-use std::sync::{Arc,Mutex,MutexGuard,PoisonError,LockResult,TryLockResult,TryLockError};
+use futures::{Async, AsyncSink, Future, Poll, Sink, Stream};
 use std::cell::RefCell;
+use std::io::{Error, ErrorKind, Read, Result, Write};
 use std::rc::Rc;
+use std::sync::{Arc, LockResult, Mutex, MutexGuard, PoisonError, TryLockError, TryLockResult};
+use std::thread::JoinHandle;
+use tokio_io::{AsyncRead, AsyncWrite};
 
-type BBR = futures::sync::mpsc::Receiver <Box<[u8]>>;
-type BBS = futures::sync::mpsc::Sender   <Box<[u8]>>;
+type BBR = futures::sync::mpsc::Receiver<Box<[u8]>>;
+type BBS = futures::sync::mpsc::Sender<Box<[u8]>>;
 
 /// Asynchronous stdin
 pub struct ThreadedStdin {
-    debt : Option<Box<[u8]>>,
-    rcv : BBR,
+    debt: Option<Box<[u8]>>,
+    rcv: BBR,
 }
 
 impl ThreadedStdin {
@@ -64,8 +64,8 @@ impl ThreadedStdin {
 }
 
 /// Constructor for the `ThreadedStdin`
-pub fn stdin(queue_size:usize) -> ThreadedStdin {
-    let (snd_, rcv) : (BBS,BBR) =  futures::sync::mpsc::channel(queue_size);
+pub fn stdin(queue_size: usize) -> ThreadedStdin {
+    let (snd_, rcv): (BBS, BBR) = futures::sync::mpsc::channel(queue_size);
     std::thread::spawn(move || {
         let mut snd = snd_;
         let sin = ::std::io::stdin();
@@ -86,17 +86,13 @@ pub fn stdin(queue_size:usize) -> ThreadedStdin {
             }
         }
     });
-    ThreadedStdin {
-        debt: None,
-        rcv,
-    }
+    ThreadedStdin { debt: None, rcv }
 }
 
 impl AsyncRead for ThreadedStdin {}
 impl Read for ThreadedStdin {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-    
-        let mut handle_the_buffer = |incoming_buf:Box<[u8]>| {
+        let mut handle_the_buffer = |incoming_buf: Box<[u8]>| {
             let l = buf.len();
             let dl = incoming_buf.len();
             if l >= dl {
@@ -108,27 +104,25 @@ impl Read for ThreadedStdin {
                 (newdebt, Ok(l))
             }
         };
-        
-        let (new_debt, ret) =
-            if let Some(debt) = self.debt.take() {
-                handle_the_buffer(debt)
-            } else {
-                match self.rcv.poll() {
-                    Ok(Async::Ready(Some(newbuf))) => handle_the_buffer(newbuf),
-                    Ok(Async::Ready(None)) => (None, Err(ErrorKind::BrokenPipe.into())),
-                    Ok(Async::NotReady)    => (None, Err(ErrorKind::WouldBlock.into())),
-                    Err(_)                 => (None, Err(ErrorKind::Other.into())),
-                }
-            };
+
+        let (new_debt, ret) = if let Some(debt) = self.debt.take() {
+            handle_the_buffer(debt)
+        } else {
+            match self.rcv.poll() {
+                Ok(Async::Ready(Some(newbuf))) => handle_the_buffer(newbuf),
+                Ok(Async::Ready(None)) => (None, Err(ErrorKind::BrokenPipe.into())),
+                Ok(Async::NotReady) => (None, Err(ErrorKind::WouldBlock.into())),
+                Err(_) => (None, Err(ErrorKind::Other.into())),
+            }
+        };
         self.debt = new_debt;
-        return ret
+        return ret;
     }
 }
 
-
 /// Asynchronous stdout
 pub struct ThreadedStdout {
-    snd : BBS,
+    snd: BBS,
     jh: Option<JoinHandle<()>>,
 }
 
@@ -143,8 +137,8 @@ impl ThreadedStdout {
     }
 }
 /// Constructor for the `ThreadedStdout`
-pub fn stdout(queue_size:usize) -> ThreadedStdout {
-    let (snd, rcv) : (BBS,BBR) =  futures::sync::mpsc::channel(queue_size);
+pub fn stdout(queue_size: usize) -> ThreadedStdout {
+    let (snd, rcv): (BBS, BBR) = futures::sync::mpsc::channel(queue_size);
     let jh = std::thread::spawn(move || {
         let sout = ::std::io::stdout();
         let mut sout_lock = sout.lock();
@@ -165,27 +159,20 @@ pub fn stdout(queue_size:usize) -> ThreadedStdout {
         }
         let _ = sout_lock.write(&[]);
     });
-    ThreadedStdout {
-        snd,
-        jh:Some(jh),
-    }
+    ThreadedStdout { snd, jh: Some(jh) }
 }
 
 impl AsyncWrite for ThreadedStdout {
     fn shutdown(&mut self) -> Poll<(), Error> {
         // Signal the thread to exit.
         match self.snd.start_send(vec![].into_boxed_slice()) {
-            Ok(AsyncSink::Ready)       => (),
-            Ok(AsyncSink::NotReady(_)) => {
-                return Ok(Async::NotReady)
-            },
-            Err(_)                     => {
-                return Err(ErrorKind::Other.into())
-            },
+            Ok(AsyncSink::Ready) => (),
+            Ok(AsyncSink::NotReady(_)) => return Ok(Async::NotReady),
+            Err(_) => return Err(ErrorKind::Other.into()),
         };
         match self.snd.poll_complete() {
-            Ok(Async::Ready(_))    => (),
-            Ok(Async::NotReady)    => return Ok(Async::NotReady),
+            Ok(Async::Ready(_)) => (),
+            Ok(Async::NotReady) => return Ok(Async::NotReady),
             Err(_) => return Err(ErrorKind::Other.into()),
         };
         if let Err(_) = self.snd.close() {
@@ -204,19 +191,19 @@ impl Write for ThreadedStdout {
         if buf.len() == 0 {
             return Ok(0);
         }
-    
+
         match self.snd.start_send(buf.to_vec().into_boxed_slice()) {
-            Ok(AsyncSink::Ready)       => (),
+            Ok(AsyncSink::Ready) => (),
             Ok(AsyncSink::NotReady(_)) => return Err(ErrorKind::WouldBlock.into()),
-            Err(_)                     => return Err(ErrorKind::Other.into()),
+            Err(_) => return Err(ErrorKind::Other.into()),
         }
-        
+
         Ok(buf.len())
     }
     fn flush(&mut self) -> Result<()> {
         match self.snd.poll_complete() {
-            Ok(Async::Ready(_))    => Ok(()),
-            Ok(Async::NotReady)    => Err(ErrorKind::WouldBlock.into()),
+            Ok(Async::Ready(_)) => Ok(()),
+            Ok(Async::NotReady) => Err(ErrorKind::WouldBlock.into()),
             Err(_) => return Err(ErrorKind::Other.into()),
         }
     }
@@ -227,8 +214,8 @@ impl Write for ThreadedStdout {
 /// Asynchronous stderr
 pub type ThreadedStderr = ThreadedStdout;
 /// Constructor for the `ThreadedStderr`
-pub fn stderr(queue_size:usize) -> ThreadedStderr {
-    let (snd, rcv) : (BBS,BBR) =  futures::sync::mpsc::channel(queue_size);
+pub fn stderr(queue_size: usize) -> ThreadedStderr {
+    let (snd, rcv): (BBS, BBR) = futures::sync::mpsc::channel(queue_size);
     let jh = std::thread::spawn(move || {
         let sout = ::std::io::stderr();
         let mut sout_lock = sout.lock();
@@ -249,12 +236,8 @@ pub fn stderr(queue_size:usize) -> ThreadedStderr {
         }
         let _ = sout_lock.write(&[]);
     });
-    ThreadedStdout {
-        snd,
-        jh:Some(jh),
-    }
+    ThreadedStdout { snd, jh: Some(jh) }
 }
-
 
 /// A sendable and clonable ThreadedStdout wrapper based on `Arc<Mutex<ThreadedStdout>>`
 ///
@@ -266,14 +249,14 @@ pub fn stderr(queue_size:usize) -> ThreadedStderr {
 pub struct SendableStdout(Arc<Mutex<ThreadedStdout>>);
 
 /// Result of `SendableStdout::lock` or `SendableStdout::try_lock`
-pub struct SendableStdoutGuard<'a>(MutexGuard<'a,ThreadedStdout>);
+pub struct SendableStdoutGuard<'a>(MutexGuard<'a, ThreadedStdout>);
 
 impl SendableStdout {
     /// wrap ThreadedStdout or ThreadedStderr in a sendable/clonable wrapper
-    pub fn new(so : ThreadedStdout) -> SendableStdout {
+    pub fn new(so: ThreadedStdout) -> SendableStdout {
         SendableStdout(Arc::new(Mutex::new(so)))
     }
-    
+
     /// Acquire more permanent mutex guard on stdout, like with `std::io::Stdout::lock`
     /// The returned guard also implements AsyncWrite
     pub fn lock(&self) -> LockResult<SendableStdoutGuard> {
@@ -287,7 +270,9 @@ impl SendableStdout {
     pub fn try_lock(&self) -> TryLockResult<SendableStdoutGuard> {
         match self.0.try_lock() {
             Ok(x) => Ok(SendableStdoutGuard(x)),
-            Err(TryLockError::Poisoned(e)) => Err(TryLockError::Poisoned(PoisonError::new(SendableStdoutGuard(e.into_inner())))),
+            Err(TryLockError::Poisoned(e)) => Err(TryLockError::Poisoned(PoisonError::new(
+                SendableStdoutGuard(e.into_inner()),
+            ))),
             Err(TryLockError::WouldBlock) => Err(TryLockError::WouldBlock),
         }
     }
@@ -297,13 +282,13 @@ impl Write for SendableStdout {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
         match self.0.lock() {
             Ok(mut l) => l.write(buf),
-            Err(e) => Err(Error::new(ErrorKind::Other, format!("{}",e))),
+            Err(e) => Err(Error::new(ErrorKind::Other, format!("{}", e))),
         }
     }
     fn flush(&mut self) -> Result<()> {
         match self.0.lock() {
             Ok(mut l) => l.flush(),
-            Err(e) => Err(Error::new(ErrorKind::Other, format!("{}",e))),
+            Err(e) => Err(Error::new(ErrorKind::Other, format!("{}", e))),
         }
     }
 }
@@ -311,7 +296,7 @@ impl AsyncWrite for SendableStdout {
     fn shutdown(&mut self) -> Poll<(), Error> {
         match self.0.lock() {
             Ok(mut l) => l.shutdown(),
-            Err(e) => Err(Error::new(ErrorKind::Other, format!("{}",e))),
+            Err(e) => Err(Error::new(ErrorKind::Other, format!("{}", e))),
         }
     }
 }
@@ -335,7 +320,7 @@ impl<'a> AsyncWrite for SendableStdoutGuard<'a> {
 pub struct ClonableStdout(Rc<RefCell<ThreadedStdout>>);
 impl ClonableStdout {
     /// wrap ThreadedStdout or ThreadedStderr in a sendable/clonable wrapper
-    pub fn new(so : ThreadedStdout) -> ClonableStdout {
+    pub fn new(so: ThreadedStdout) -> ClonableStdout {
         ClonableStdout(Rc::new(RefCell::new(so)))
     }
 }
@@ -366,17 +351,16 @@ pub type SendableStderrGuard<'a> = SendableStdoutGuard<'a>;
 /// Alias for ClonableStdout to avoid confusion of ClonableStdout being used for stderr.
 pub type ClonableStderr = ClonableStdout;
 
-
 /// A clonable `ThreadedStdout` wrapper based on `Rc<RefCell<ThreadedStdout>>`
 /// If you need `Send`, use SendableStdout
-/// 
+///
 /// Note that data being read is not duplicated across cloned readers used from multiple tasks.
 /// Be careful about corruption.
 #[derive(Clone)]
 pub struct ClonableStdin(Rc<RefCell<ThreadedStdin>>);
 impl ClonableStdin {
     /// wrap ThreadedStdout or ThreadedStderr in a sendable/clonable wrapper
-    pub fn new(so : ThreadedStdin) -> ClonableStdin {
+    pub fn new(so: ThreadedStdin) -> ClonableStdin {
         ClonableStdin(Rc::new(RefCell::new(so)))
     }
 }
@@ -386,8 +370,7 @@ impl Read for ClonableStdin {
         self.0.borrow_mut().read(buf)
     }
 }
-impl AsyncRead for ClonableStdin {
-}
+impl AsyncRead for ClonableStdin {}
 /// A sendable and clonable ThreadedStdin wrapper based on `Arc<Mutex<ThreadedStdin>>`
 ///
 /// Note that data being read is not duplicated across cloned readers used from multiple tasks.
@@ -396,14 +379,14 @@ impl AsyncRead for ClonableStdin {
 pub struct SendableStdin(Arc<Mutex<ThreadedStdin>>);
 
 /// Result of `SendableStdin::lock` or `SendableStdin::try_lock`
-pub struct SendableStdinGuard<'a>(MutexGuard<'a,ThreadedStdin>);
+pub struct SendableStdinGuard<'a>(MutexGuard<'a, ThreadedStdin>);
 
 impl SendableStdin {
     /// wrap ThreadedStdin in a sendable/clonable wrapper
-    pub fn new(si : ThreadedStdin) -> SendableStdin {
+    pub fn new(si: ThreadedStdin) -> SendableStdin {
         SendableStdin(Arc::new(Mutex::new(si)))
     }
-    
+
     /// Acquire more permanent mutex guard on stdout, like with `std::io::Stdout::lock`
     /// The returned guard also implements AsyncWrite
     pub fn lock(&self) -> LockResult<SendableStdinGuard> {
@@ -417,7 +400,9 @@ impl SendableStdin {
     pub fn try_lock(&self) -> TryLockResult<SendableStdinGuard> {
         match self.0.try_lock() {
             Ok(x) => Ok(SendableStdinGuard(x)),
-            Err(TryLockError::Poisoned(e)) => Err(TryLockError::Poisoned(PoisonError::new(SendableStdinGuard(e.into_inner())))),
+            Err(TryLockError::Poisoned(e)) => Err(TryLockError::Poisoned(PoisonError::new(
+                SendableStdinGuard(e.into_inner()),
+            ))),
             Err(TryLockError::WouldBlock) => Err(TryLockError::WouldBlock),
         }
     }
@@ -427,21 +412,15 @@ impl Read for SendableStdin {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         match self.0.lock() {
             Ok(mut l) => l.read(buf),
-            Err(e) => Err(Error::new(ErrorKind::Other, format!("{}",e))),
+            Err(e) => Err(Error::new(ErrorKind::Other, format!("{}", e))),
         }
     }
 }
-impl AsyncRead for SendableStdin {
-}
+impl AsyncRead for SendableStdin {}
 
 impl<'a> Read for SendableStdinGuard<'a> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         self.0.read(buf)
     }
 }
-impl<'a> AsyncRead for SendableStdinGuard<'a> {
-}
-
-
-
-
+impl<'a> AsyncRead for SendableStdinGuard<'a> {}
