@@ -39,6 +39,9 @@ use std::io::{Error, ErrorKind, Result, Read, Write};
 use futures::{Stream,Poll,Async,Sink,Future,AsyncSink};
 use tokio_io::{AsyncRead,AsyncWrite};
 use std::thread::JoinHandle;
+use std::sync::{Arc,Mutex,MutexGuard,PoisonError,LockResult,TryLockResult,TryLockError};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 type BBR = futures::sync::mpsc::Receiver <Box<[u8]>>;
 type BBS = futures::sync::mpsc::Sender   <Box<[u8]>>;
@@ -229,3 +232,194 @@ pub fn stderr(queue_size:usize) -> ThreadedStderr {
         jh:Some(jh),
     }
 }
+
+
+/// A sendable and clonable ThreadedStdout wrapper based on `Arc<Mutex<ThreadedStdout>>`
+///
+/// Note that a mutex is being locked every time a write is performed,
+/// so performance may be a problem, unless you use the `lock` method.
+///
+/// Also note that if data is outputted using multiple `Write::write` calls from multiple tasks, the order of chunks is not specified.
+#[derive(Clone)]
+pub struct SendableStdout(Arc<Mutex<ThreadedStdout>>);
+
+/// Result of `SendableStdout::lock` or `SendableStdout::try_lock`
+pub struct SendableStdoutGuard<'a>(MutexGuard<'a,ThreadedStdout>);
+
+impl SendableStdout {
+    /// wrap ThreadedStdout or ThreadedStderr in a sendable/clonable wrapper
+    pub fn new(so : ThreadedStdout) -> SendableStdout {
+        SendableStdout(Arc::new(Mutex::new(so)))
+    }
+    
+    /// Acquire more permanent mutex guard on stdout, like with `std::io::Stdout::lock`
+    /// The returned guard also implements AsyncWrite
+    pub fn lock(&self) -> LockResult<SendableStdoutGuard> {
+        match self.0.lock() {
+            Ok(x) => Ok(SendableStdoutGuard(x)),
+            Err(e) => Err(PoisonError::new(SendableStdoutGuard(e.into_inner()))),
+        }
+    }
+    /// Acquire more permanent mutex guard on stdout
+    /// The returned guard also implements AsyncWrite
+    pub fn try_lock(&self) -> TryLockResult<SendableStdoutGuard> {
+        match self.0.try_lock() {
+            Ok(x) => Ok(SendableStdoutGuard(x)),
+            Err(TryLockError::Poisoned(e)) => Err(TryLockError::Poisoned(PoisonError::new(SendableStdoutGuard(e.into_inner())))),
+            Err(TryLockError::WouldBlock) => Err(TryLockError::WouldBlock),
+        }
+    }
+}
+
+impl Write for SendableStdout {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        match self.0.lock() {
+            Ok(mut l) => l.write(buf),
+            Err(e) => Err(Error::new(ErrorKind::Other, format!("{}",e))),
+        }
+    }
+    fn flush(&mut self) -> Result<()> {
+        match self.0.lock() {
+            Ok(mut l) => l.flush(),
+            Err(e) => Err(Error::new(ErrorKind::Other, format!("{}",e))),
+        }
+    }
+}
+impl AsyncWrite for SendableStdout {
+    fn shutdown(&mut self) -> Poll<(), Error> {
+        match self.0.lock() {
+            Ok(mut l) => l.shutdown(),
+            Err(e) => Err(Error::new(ErrorKind::Other, format!("{}",e))),
+        }
+    }
+}
+impl<'a> Write for SendableStdoutGuard<'a> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        self.0.write(buf)
+    }
+    fn flush(&mut self) -> Result<()> {
+        self.0.flush()
+    }
+}
+impl<'a> AsyncWrite for SendableStdoutGuard<'a> {
+    fn shutdown(&mut self) -> Poll<(), Error> {
+        self.0.shutdown()
+    }
+}
+
+/// A clonable `ThreadedStdout` wrapper based on `Rc<RefCell<ThreadedStdout>>`
+/// If you need `Send`, use SendableStdout
+#[derive(Clone)]
+pub struct ClonableStdout(Rc<RefCell<ThreadedStdout>>);
+impl ClonableStdout {
+    /// wrap ThreadedStdout or ThreadedStderr in a sendable/clonable wrapper
+    pub fn new(so : ThreadedStdout) -> ClonableStdout {
+        ClonableStdout(Rc::new(RefCell::new(so)))
+    }
+}
+
+impl Write for ClonableStdout {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        self.0.borrow_mut().write(buf)
+    }
+    fn flush(&mut self) -> Result<()> {
+        self.0.borrow_mut().flush()
+    }
+}
+impl AsyncWrite for ClonableStdout {
+    fn shutdown(&mut self) -> Poll<(), Error> {
+        self.0.borrow_mut().shutdown()
+    }
+}
+
+/// Alias for SendableStdout to avoid confusion of SendableStdout being used for stderr.
+///
+/// Note that a mutex is being locked every time a read is performed,
+/// so performance may be a problem.
+///
+/// Also note that if data is outputted using multiple `Write::write` calls from multiple tasks, the order of chunks is not specified.
+pub type SendableStderr = SendableStdout;
+/// Result of `SendableStderr::lock` or `SendableStderr::try_lock`
+pub type SendableStderrGuard<'a> = SendableStdoutGuard<'a>;
+/// Alias for ClonableStdout to avoid confusion of ClonableStdout being used for stderr.
+pub type ClonableStderr = ClonableStdout;
+
+
+/// A clonable `ThreadedStdout` wrapper based on `Rc<RefCell<ThreadedStdout>>`
+/// If you need `Send`, use SendableStdout
+/// 
+/// Note that data being read is not duplicated across cloned readers used from multiple tasks.
+/// Be careful about corruption.
+#[derive(Clone)]
+pub struct ClonableStdin(Rc<RefCell<ThreadedStdin>>);
+impl ThreadedStdin {
+    /// wrap ThreadedStdout or ThreadedStderr in a sendable/clonable wrapper
+    pub fn new(so : ThreadedStdin) -> ClonableStdin {
+        ClonableStdin(Rc::new(RefCell::new(so)))
+    }
+}
+
+impl Read for ClonableStdin {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        self.0.borrow_mut().read(buf)
+    }
+}
+impl AsyncRead for ClonableStdin {
+}
+/// A sendable and clonable ThreadedStdin wrapper based on `Arc<Mutex<ThreadedStdin>>`
+///
+/// Note that data being read is not duplicated across cloned readers used from multiple tasks.
+/// Be careful about corruption.
+#[derive(Clone)]
+pub struct SendableStdin(Arc<Mutex<ThreadedStdin>>);
+
+/// Result of `SendableStdin::lock` or `SendableStdin::try_lock`
+pub struct SendableStdinGuard<'a>(MutexGuard<'a,ThreadedStdin>);
+
+impl SendableStdin {
+    /// wrap ThreadedStdin in a sendable/clonable wrapper
+    pub fn new(si : ThreadedStdin) -> SendableStdin {
+        SendableStdin(Arc::new(Mutex::new(si)))
+    }
+    
+    /// Acquire more permanent mutex guard on stdout, like with `std::io::Stdout::lock`
+    /// The returned guard also implements AsyncWrite
+    pub fn lock(&self) -> LockResult<SendableStdinGuard> {
+        match self.0.lock() {
+            Ok(x) => Ok(SendableStdinGuard(x)),
+            Err(e) => Err(PoisonError::new(SendableStdinGuard(e.into_inner()))),
+        }
+    }
+    /// Acquire more permanent mutex guard on stdout
+    /// The returned guard also implements AsyncWrite
+    pub fn try_lock(&self) -> TryLockResult<SendableStdinGuard> {
+        match self.0.try_lock() {
+            Ok(x) => Ok(SendableStdinGuard(x)),
+            Err(TryLockError::Poisoned(e)) => Err(TryLockError::Poisoned(PoisonError::new(SendableStdinGuard(e.into_inner())))),
+            Err(TryLockError::WouldBlock) => Err(TryLockError::WouldBlock),
+        }
+    }
+}
+
+impl Read for SendableStdin {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        match self.0.lock() {
+            Ok(mut l) => l.read(buf),
+            Err(e) => Err(Error::new(ErrorKind::Other, format!("{}",e))),
+        }
+    }
+}
+impl AsyncRead for SendableStdin {
+}
+
+impl<'a> Read for SendableStdinGuard<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        self.0.read(buf)
+    }
+}
+impl<'a> AsyncRead for SendableStdinGuard<'a> {
+}
+
+
+
+
