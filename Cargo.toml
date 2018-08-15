@@ -1,6 +1,6 @@
 [package]
 name = "tokio-stdin-stdout"
-version = "0.1.3"
+version = "0.1.4"
 license = "MIT/Apache-2.0"
 authors = ["Vitaly _Vi Shukela <vi0oss@gmail.com>"]
 repository = "https://github.com/vi/tokio-stdin-stdout"
