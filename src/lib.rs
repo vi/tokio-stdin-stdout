@@ -71,14 +71,7 @@ pub fn stdin(queue_size: usize) -> ThreadedStdin {
         let sin = ::std::io::stdin();
         let mut sin_lock = sin.lock();
         let mut buf = vec![0; BUFSIZ];
-        loop {
-            let ret = match sin_lock.read(&mut buf[..]) {
-                Ok(x) => x,
-                Err(_) => {
-                    // BrokenPipe
-                    break;
-                }
-            };
+        while let Ok(ret) = sin_lock.read(&mut buf[..]) {
             let content = buf[0..ret].to_vec().into_boxed_slice();
             snd = match snd.send(content).wait() {
                 Ok(x) => x,
@@ -116,7 +109,7 @@ impl Read for ThreadedStdin {
             }
         };
         self.debt = new_debt;
-        return ret;
+        ret
     }
 }
 
@@ -147,10 +140,10 @@ pub fn stdout(queue_size: usize) -> ThreadedStdout {
                 if b.len() == 0 {
                     break;
                 }
-                if let Err(_) = sout_lock.write_all(&b) {
+                if sout_lock.write_all(&b).is_err() {
                     break;
                 }
-                if let Err(_) = sout_lock.flush() {
+                if sout_lock.flush().is_err() {
                     break;
                 }
             } else {
@@ -175,11 +168,11 @@ impl AsyncWrite for ThreadedStdout {
             Ok(Async::NotReady) => return Ok(Async::NotReady),
             Err(_) => return Err(ErrorKind::Other.into()),
         };
-        if let Err(_) = self.snd.close() {
+        if self.snd.close().is_err() {
             return Err(ErrorKind::Other.into());
         };
         if let Some(jh) = self.jh.take() {
-            if let Err(_) = jh.join() {
+            if jh.join().is_err() {
                 return Err(ErrorKind::Other.into());
             };
         }
@@ -188,7 +181,7 @@ impl AsyncWrite for ThreadedStdout {
 }
 impl Write for ThreadedStdout {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        if buf.len() == 0 {
+        if buf.is_empty() {
             return Ok(0);
         }
 
@@ -204,7 +197,7 @@ impl Write for ThreadedStdout {
         match self.snd.poll_complete() {
             Ok(Async::Ready(_)) => Ok(()),
             Ok(Async::NotReady) => Err(ErrorKind::WouldBlock.into()),
-            Err(_) => return Err(ErrorKind::Other.into()),
+            Err(_) => Err(ErrorKind::Other.into()),
         }
     }
 }
@@ -224,10 +217,10 @@ pub fn stderr(queue_size: usize) -> ThreadedStderr {
                 if b.len() == 0 {
                     break;
                 }
-                if let Err(_) = sout_lock.write_all(&b) {
+                if sout_lock.write_all(&b).is_err() {
                     break;
                 }
-                if let Err(_) = sout_lock.flush() {
+                if sout_lock.flush().is_err() {
                     break;
                 }
             } else {
