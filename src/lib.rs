@@ -53,11 +53,11 @@ pub struct ThreadedStdin {
 }
 
 impl ThreadedStdin {
-    /// Wrap into Arc<Mutex> to make it clonable and sendable
+    /// Wrap into `Arc<Mutex>` to make it clonable and sendable
     pub fn make_sendable(self) -> SendableStdin {
         SendableStdin::new(self)
     }
-    /// Wrap into Rc<RefCell> to make it clonable
+    /// Wrap into `Rc<RefCell>` to make it clonable
     pub fn make_clonable(self) -> ClonableStdin {
         ClonableStdin::new(self)
     }
@@ -120,11 +120,11 @@ pub struct ThreadedStdout {
 }
 
 impl ThreadedStdout {
-    /// Wrap into Arc<Mutex> to make it clonable and sendable
+    /// Wrap into `Arc<Mutex>` to make it clonable and sendable
     pub fn make_sendable(self) -> SendableStdout {
         SendableStdout::new(self)
     }
-    /// Wrap into Rc<RefCell> to make it clonable
+    /// Wrap into `Rc<RefCell>` to make it clonable
     pub fn make_clonable(self) -> ClonableStdout {
         ClonableStdout::new(self)
     }
