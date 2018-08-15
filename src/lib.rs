@@ -50,8 +50,19 @@ type BBS = futures::sync::mpsc::Sender   <Box<[u8]>>;
 pub struct ThreadedStdin {
     debt : Option<Box<[u8]>>,
     rcv : BBR,
-
 }
+
+impl ThreadedStdin {
+    /// Wrap into Arc<Mutex> to make it clonable and sendable
+    pub fn make_sendable(self) -> SendableStdin {
+        SendableStdin::new(self)
+    }
+    /// Wrap into Rc<RefCell> to make it clonable
+    pub fn make_clonable(self) -> ClonableStdin {
+        ClonableStdin::new(self)
+    }
+}
+
 /// Constructor for the `ThreadedStdin`
 pub fn stdin(queue_size:usize) -> ThreadedStdin {
     let (snd_, rcv) : (BBS,BBR) =  futures::sync::mpsc::channel(queue_size);
@@ -119,6 +130,17 @@ impl Read for ThreadedStdin {
 pub struct ThreadedStdout {
     snd : BBS,
     jh: Option<JoinHandle<()>>,
+}
+
+impl ThreadedStdout {
+    /// Wrap into Arc<Mutex> to make it clonable and sendable
+    pub fn make_sendable(self) -> SendableStdout {
+        SendableStdout::new(self)
+    }
+    /// Wrap into Rc<RefCell> to make it clonable
+    pub fn make_clonable(self) -> ClonableStdout {
+        ClonableStdout::new(self)
+    }
 }
 /// Constructor for the `ThreadedStdout`
 pub fn stdout(queue_size:usize) -> ThreadedStdout {
@@ -352,7 +374,7 @@ pub type ClonableStderr = ClonableStdout;
 /// Be careful about corruption.
 #[derive(Clone)]
 pub struct ClonableStdin(Rc<RefCell<ThreadedStdin>>);
-impl ThreadedStdin {
+impl ClonableStdin {
     /// wrap ThreadedStdout or ThreadedStderr in a sendable/clonable wrapper
     pub fn new(so : ThreadedStdin) -> ClonableStdin {
         ClonableStdin(Rc::new(RefCell::new(so)))

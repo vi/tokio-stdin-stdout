@@ -9,7 +9,7 @@ use tokio::prelude::Stream;
 
 fn main() {
   
-  let stdout = tokio_stdin_stdout::SendableStdout::new(tokio_stdin_stdout::stdout(0));
+  let stdout = tokio_stdin_stdout::stdout(0).make_sendable();
   let stdout_ = stdout.clone();
 
   let h = std::iter::repeat("hello\n").take(10);
