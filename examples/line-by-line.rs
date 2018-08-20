@@ -25,8 +25,7 @@ fn main() {
       return future_write;
     });
 
-    tokio::run(future_compute);
-    Ok(())
+    future_compute.map_err(|err|panic!("Error: {:?}",err))
   }).map_err(|err| {
     panic!("Error: {:?}", err);
   });
