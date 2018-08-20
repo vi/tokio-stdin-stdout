@@ -13,7 +13,7 @@ fn async_op(input: String) -> Box<Future<Item = String, Error = ()> + Send> {
 
 fn main() {
   let stdin = tokio_stdin_stdout::stdin(0);
-  let stdout = tokio_stdin_stdout::stdout(0).make_sendable();
+  let stdout = tokio_stdin_stdout::stdout(0); // .make_sendable();
 
   let framed_stdin = FramedRead::new(stdin, LinesCodec::new());
   let framed_stdout = FramedWrite::new(stdout, LinesCodec::new());
@@ -40,5 +40,17 @@ fn main() {
       panic!("Error: {:?}", err);
     });
 
-  tokio::run(future);
+  // Here is a demonstration of various ways of running a Tokio program.
+
+  // 1. Normal, fully multithreaded mode. Requires `make_sendable` above.
+  //tokio::run(future);
+  
+  // 2. Bi-threaded mode: executor thread + reactor thread. 
+  // In this paricular example there are also stdin and stdout threads.
+  //tokio::executor::current_thread::block_on_all(future).unwrap();
+  
+  // 3. Singlethreaded mode: entire Tokio on one thread.
+  // tokio-stdin-stdout hovewer spawn separate threads for stdin and stdout anyway,
+  // so there are still threads here
+  tokio::runtime::current_thread::Runtime::new().unwrap().block_on(future).unwrap();
 }
