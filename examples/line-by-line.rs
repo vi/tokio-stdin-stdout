@@ -27,11 +27,11 @@ fn main() {
     .forward(framed_stdout)
     .map(|(_framed_stdin,_framed_stdout)|{
       // _framed_stdin is exhaused now
-      // _framed_stdout is closed by `forward` above and is also unusable
+      // _framed_stdout is closed by `Stream::forward` above and is also unusable
       
-      // You may try with `send_all` approach if you need other behaviour,
-      // but remember to `shutdown` the `stdout` to avoid existing before
-      // the data is actually delivered to stdout.
+      // You may try with `Sink::send_all` approach if you need other behaviour,
+      // but remember to `AsyncWrite::shutdown` the `stdout` to ensure in-flight
+      // data is actually delivered to stdout before existing.
       
       // this `map` is needed to bring the final type to (), 
       // as typically required for executing a future.
@@ -50,7 +50,7 @@ fn main() {
   //tokio::executor::current_thread::block_on_all(future).unwrap();
   
   // 3. Singlethreaded mode: entire Tokio on one thread.
-  // tokio-stdin-stdout hovewer spawn separate threads for stdin and stdout anyway,
-  // so there are still threads here
+  // tokio-stdin-stdout however spawns separate threads for stdin and stdout anyway,
+  // so there are still threads here in this example.
   tokio::runtime::current_thread::Runtime::new().unwrap().block_on(future).unwrap();
 }
