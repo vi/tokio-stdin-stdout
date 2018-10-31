@@ -161,15 +161,19 @@ impl AsyncWrite for ThreadedStdout {
         match self.snd.start_send(vec![].into_boxed_slice()) {
             Ok(AsyncSink::Ready) => (),
             Ok(AsyncSink::NotReady(_)) => return Ok(Async::NotReady),
-            Err(_) => return Err(ErrorKind::Other.into()),
+            Err(_) => {
+                return Ok(Async::Ready(()));
+            }
         };
         match self.snd.poll_complete() {
             Ok(Async::Ready(_)) => (),
             Ok(Async::NotReady) => return Ok(Async::NotReady),
-            Err(_) => return Err(ErrorKind::Other.into()),
+            Err(e) => {
+                return Ok(Async::Ready(()));
+            }
         };
         if self.snd.close().is_err() {
-            return Err(ErrorKind::Other.into());
+            return Ok(Async::Ready(()));
         };
         if let Some(jh) = self.jh.take() {
             if jh.join().is_err() {
