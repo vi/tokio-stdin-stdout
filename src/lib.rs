@@ -168,7 +168,7 @@ impl AsyncWrite for ThreadedStdout {
         match self.snd.poll_complete() {
             Ok(Async::Ready(_)) => (),
             Ok(Async::NotReady) => return Ok(Async::NotReady),
-            Err(e) => {
+            Err(_) => {
                 return Ok(Async::Ready(()));
             }
         };
